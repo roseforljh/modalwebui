@@ -5,44 +5,45 @@ const getApiUrls = () => {
 };
 
 const API_URLS = getApiUrls();
-let currentApiIndex = 0;
 
-const getNextApiUrl = () => {
+export const generateImage = async (prompt, width, height, steps) => {
     if (API_URLS.length === 0) {
         throw new Error("No API URLs configured");
     }
-    const url = API_URLS[currentApiIndex];
-    // 简单的轮询策略 (Round-Robin)
-    currentApiIndex = (currentApiIndex + 1) % API_URLS.length;
-    console.log(`Using API node: ${url}`);
-    return url;
-};
 
-export const generateImage = async (prompt, width, height, steps) => {
-    const baseUrl = getNextApiUrl();
-    const url = new URL(baseUrl);
-    url.searchParams.append("prompt", prompt);
-    url.searchParams.append("width", width);
-    url.searchParams.append("height", height);
-    url.searchParams.append("steps", steps);
+    let lastError = null;
 
-    try {
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                'Accept': 'image/jpeg',
-            },
-        });
+    // 故障转移策略 (Failover): 优先使用第一个，失败则尝试下一个
+    for (const baseUrl of API_URLS) {
+        try {
+            console.log(`Trying API node: ${baseUrl}`);
+            const url = new URL(baseUrl);
+            url.searchParams.append("prompt", prompt);
+            url.searchParams.append("width", width);
+            url.searchParams.append("height", height);
+            url.searchParams.append("steps", steps);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API Error: ${response.status} - ${errorText}`);
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'Accept': 'image/jpeg',
+                },
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error: ${response.status} - ${errorText}`);
+            }
+
+            const blob = await response.blob();
+            return URL.createObjectURL(blob);
+        } catch (error) {
+            console.warn(`Failed to generate image with ${baseUrl}:`, error);
+            lastError = error;
+            // 继续尝试下一个节点
         }
-
-        const blob = await response.blob();
-        return URL.createObjectURL(blob);
-    } catch (error) {
-        console.error("Failed to generate image:", error);
-        throw error;
     }
+
+    console.error("All API nodes failed");
+    throw lastError || new Error("All API nodes failed");
 };
